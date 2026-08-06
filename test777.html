@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Spoon Sports Pager - Cloud Sync Fixed</title>
+    <title>Spoon Sports Pager - Final Fixed</title>
     <!-- 引入雲端即時通訊庫 (MQTT.js) -->
     <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
     <style>
@@ -27,7 +27,7 @@
         .history-item { background: var(--spoon-white); padding: 10px; font-size: 3vw; text-align: center; border: 5px solid var(--spoon-blue); color: var(--spoon-blue); font-style: italic; font-weight: 900; border-radius: 8px; min-height: 1.2em; }
         .history-item.latest { background: var(--spoon-blue); color: var(--spoon-yellow); transform: skewX(-12deg); }
 
-        /* 🎨 閒置待機圖片畫廊層 (5分鐘無叫號自動覆蓋全螢幕) */
+        /* 🎨 閒置待機圖片畫廊層 (點擊即可解鎖) */
         #idle-screen {
             position: fixed;
             inset: 0;
@@ -37,6 +37,7 @@
             align-items: center;
             justify-content: center;
             opacity: 0;
+            cursor: pointer;
             transition: opacity 1s ease-in-out;
         }
         #idle-screen.active {
@@ -108,13 +109,13 @@
     </div>
 
 <script>
-    // 🌐 雲端頻道設定（您可以隨意替換這個頻道名字，確保與其他店家隔離）
+    // 🌐 雲端頻道設定
     const CLOUD_CHANNEL = 'spoon_sports_pager_shop_bboy0908';
     
     // 1. 同一裝置分頁廣播備用
     const bc = new BroadcastChannel('spoon_v14_fixed');
     
-    // 2. 雲端 MQTT WebSocket 連線（實現真正的跨裝置連線）
+    // 2. 雲端 MQTT WebSocket 連線
     const mqttClient = mqtt.connect('wss://broker.emqx.io:8084/mqtt');
 
     mqttClient.on('connect', () => {
@@ -133,7 +134,6 @@
 
     bc.onmessage = (ev) => handleSignal(ev.data);
 
-    // 統一發送消息函數（同時發給同裝置與雲端）
     function broadcastSignal(msg) {
         bc.postMessage(msg);
         if (mqttClient.connected) {
@@ -154,6 +154,7 @@
     let idleTimer = null;
     let imageRotationTimer = null;
     let currentUtterances = [];
+    let currentMode = '';
 
     // 🎨 設定您繪畫的圖片清單
     const idleImages = [
@@ -163,17 +164,25 @@
     const IDLE_TIMEOUT_MS = 5 * 60 * 1000; // 5 分鐘無叫號觸發待機
     const IMAGE_SWITCH_MS = 15 * 1000;     // 多張圖片時每 15 秒輪播一張
 
+    // 💡 觸控解鎖：點擊待機圖片時立刻關閉圖片並重新倒數 5 分鐘
+    idleScreen.addEventListener('click', resetIdleTimer);
+
     function resetIdleTimer() {
         idleScreen.classList.remove('active');
         clearInterval(imageRotationTimer);
         if (idleTimer) clearTimeout(idleTimer);
-        idleTimer = setTimeout(() => {
-            showIdleScreen();
-        }, IDLE_TIMEOUT_MS);
+        
+        // 僅有在電視顯示端才啟用 5 分鐘倒數
+        if (currentMode === 'display') {
+            idleTimer = setTimeout(() => {
+                showIdleScreen();
+            }, IDLE_TIMEOUT_MS);
+        }
     }
 
     function showIdleScreen() {
-        if (idleImages.length > 0) {
+        // 嚴格限制：只有電視顯示端才會彈出待機圖片
+        if (currentMode === 'display' && idleImages.length > 0) {
             changeIdleImage();
             idleScreen.classList.add('active');
             if (idleImages.length > 1) {
@@ -240,11 +249,18 @@
     }
 
     function initApp(mode) {
+        currentMode = mode;
+        
         if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         requestWakeLock();
         
         if (mode === 'display') {
             resetIdleTimer();
+        } else {
+            // 若切換為收銀端，確保清除待機狀態與計時器
+            idleScreen.classList.remove('active');
+            if (idleTimer) clearTimeout(idleTimer);
+            clearInterval(imageRotationTimer);
         }
 
         window.speechSynthesis.cancel();
@@ -266,7 +282,6 @@
         ).join('');
     }
 
-    // 處理收到叫號訊號的主邏輯
     function handleSignal(data) {
         resetIdleTimer();
 
@@ -285,41 +300,44 @@
         void bigNumber.offsetWidth;
         bigNumber.classList.add('animate-call');
 
-        playCrystalChime();
+        // 僅電視顯示端發出音效與語音
+        if (currentMode === 'display') {
+            playCrystalChime();
 
-        setTimeout(() => {
-            window.speechSynthesis.cancel();
-            currentUtterances = [];
+            setTimeout(() => {
+                window.speechSynthesis.cancel();
+                currentUtterances = [];
 
-            const callNum = val.toString();
+                const callNum = val.toString();
 
-            const msgHK = new SpeechSynthesisUtterance(callNum + " 號，請取餐");
-            const voices = window.speechSynthesis.getVoices();
-            const hkVoice = voices.find(v => v.lang === 'zh-HK' && v.name.includes('Premium')) || 
-                            voices.find(v => v.lang.includes('HK')) || 
-                            voices.find(v => v.lang.includes('zh'));
-            
-            if (hkVoice) msgHK.voice = hkVoice;
-            msgHK.lang = 'zh-HK';
-            msgHK.rate = 0.92;
-            msgHK.volume = 1.0;
+                const msgHK = new SpeechSynthesisUtterance(callNum + " 號，請取餐");
+                const voices = window.speechSynthesis.getVoices();
+                const hkVoice = voices.find(v => v.lang === 'zh-HK' && v.name.includes('Premium')) || 
+                                voices.find(v => v.lang.includes('HK')) || 
+                                voices.find(v => v.lang.includes('zh'));
+                
+                if (hkVoice) msgHK.voice = hkVoice;
+                msgHK.lang = 'zh-HK';
+                msgHK.rate = 0.92;
+                msgHK.volume = 1.0;
 
-            const englishText = numberToEnglish(callNum);
-            const msgEN = new SpeechSynthesisUtterance("Number " + englishText + ", please collect your meal");
-            msgEN.lang = 'en-US';
-            msgEN.volume = 0.55;
-            msgEN.rate = 0.95;
+                const englishText = numberToEnglish(callNum);
+                const msgEN = new SpeechSynthesisUtterance("Number " + englishText + ", please collect your meal");
+                msgEN.lang = 'en-US';
+                msgEN.volume = 0.55;
+                msgEN.rate = 0.95;
 
-            currentUtterances.push(msgHK, msgEN);
+                currentUtterances.push(msgHK, msgEN);
 
-            msgHK.onend = () => {
-                setTimeout(() => {
-                    window.speechSynthesis.speak(msgEN);
-                }, 300);
-            };
+                msgHK.onend = () => {
+                    setTimeout(() => {
+                        window.speechSynthesis.speak(msgEN);
+                    }, 300);
+                };
 
-            window.speechSynthesis.speak(msgHK);
-        }, 3700); 
+                window.speechSynthesis.speak(msgHK);
+            }, 3700); 
+        }
     }
 </script>
 </body>
